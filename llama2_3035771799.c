@@ -47,21 +47,186 @@ $ ./llama2_[UID] <seed> <thr_count>
 
 // Global Variables
 struct rusage main_usage;        // get usage for main thread
+// create a list of threads
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond_var = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cond_var2 = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cond_var3 = PTHREAD_COND_INITIALIZER;
+int active_threads = 0;
+int num_threads = 0;
+struct rusage *thr_usages; // get usage for each thread
+int finish = 0;
+pthread_t *threads;
+
+typedef struct {
+    int id;
+    float* out;
+    float* vec;
+    float* mat;
+    int col;
+    int row;
+    int status;
+    struct timeval user_t;
+    struct timeval sys_t;
+} thread_data;
+
+thread_data* data;
+
+void* thr_func(void* arg);
 
 int init_mat_vec_mul(int thr_count) {
+    // initialize mutex and conditional variables
+    num_threads = thr_count;
+    threads = malloc(thr_count * sizeof(pthread_t));
+    thr_usages = (struct rusage*) malloc(thr_count * sizeof(struct rusage));
+    data = (thread_data*) malloc(thr_count * sizeof(thread_data));
     
+    // create threads
+    for (int i = 0; i < thr_count; ++i) {
+        data[i].id = i;
+        pthread_create(&threads[i], NULL, thr_func, &data[i]);
+    }
+
 }
 
 void mat_vec_mul(float* out, float* vec, float* mat, int col, int row) {
+    // assign new parameters to threads
     
+    pthread_mutex_lock(&mutex);
+    for (int i = 0; i < num_threads; ++i) {
+        data[i].out = out;
+        data[i].vec = vec;
+        data[i].mat = mat;
+        data[i].col = col;
+        data[i].row = row;
+        data[i].status = 1;
+        data[i].user_t.tv_sec = 1;
+        data[i].user_t.tv_usec = 1;
+        data[i].sys_t.tv_sec = 1;
+        data[i].sys_t.tv_usec = 1;
+        ++active_threads;
+        
+        pthread_cond_signal(&cond_var);
+    }
+    // wait for threads to finish
+    while (active_threads > 0) {
+        
+        pthread_cond_wait(&cond_var2, &mutex);
+        
+    }
+    pthread_mutex_unlock(&mutex);
+    return;
 }
 
 int close_mat_vec_mul() {
+    pthread_mutex_lock(&mutex);
     
+    // Wake up threads to collect the system usage (of themselves)
+    for (int i = 0; i < num_threads; ++i) {
+        data[i].status = 2;
+    }
+    for (int i = 0; i < num_threads; ++i) {
+        pthread_cond_signal(&cond_var);
+    }
+
+    // wait for threads to finish
+    while (finish < num_threads) {
+        pthread_cond_wait(&cond_var3, &mutex);
+    }
+    pthread_mutex_unlock(&mutex);
+
+    // Print system usage of each thread.
+    for (int i = 0; i < num_threads; ++i) {
+        printf("Thread %d has completed - user: %ld.%04ld s, system: %ld.%04ld s\n", i, data[i].user_t.tv_sec, data[i].user_t.tv_usec / 100, data[i].sys_t.tv_sec, data[i].sys_t.tv_usec / 100);
+        fflush(stdout); 
+    }
+    // print system usage of main thread
+    getrusage(RUSAGE_THREAD, &main_usage);
+    printf("Main thread - user: %ld.%04ld s, system: %ld.%04ld s\n", main_usage.ru_utime.tv_sec, main_usage.ru_utime.tv_usec / 100, main_usage.ru_stime.tv_sec, main_usage.ru_stime.tv_usec / 100);
+    fflush(stdout);
+    // Clear resources.
+    free(data);
+    free(threads);
+    pthread_mutex_destroy(&mutex);
+    pthread_cond_destroy(&cond_var);
+    pthread_cond_destroy(&cond_var2);
+    pthread_cond_destroy(&cond_var3);
+    free(thr_usages);
+    return 0;
 }
 
 void *thr_func(void *arg) {
-    
+    // get thread id
+    thread_data* dat = (thread_data*) arg;
+    int ratio;
+    int start;
+    int end;
+    while(1){
+        // wait for main thread to assign new parameters
+        pthread_mutex_lock(&mutex);
+        while (dat->status == 0) {
+            pthread_cond_wait(&cond_var, &mutex);
+        }
+        pthread_mutex_unlock(&mutex);
+        // check if thread should close
+        if (dat->status == 2) {
+            //printf("Thread %d closing\n", dat->id);
+            //fflush(stdout);
+            // printf("111111\n");
+            fflush(stdout);
+            pthread_mutex_lock(&mutex);
+            finish++;
+            
+            getrusage(RUSAGE_THREAD, &thr_usages[dat->id]);
+            data[dat->id].user_t = thr_usages[dat->id].ru_utime;
+            data[dat->id].sys_t = thr_usages[dat->id].ru_stime;
+            pthread_cond_signal(&cond_var3);
+            pthread_mutex_unlock(&mutex);
+            return NULL;
+        }
+        
+        int k = dat->id;
+        
+        // Perform matrix-vector multiplication here.
+        
+        if (dat->row % num_threads != 0) {
+
+            ratio = dat->row / num_threads + 1;
+
+            if (k == num_threads - 1) {
+                start = k * ratio;
+                end = dat->row;
+            }
+            else{
+                start = k * ratio;
+                end = (k + 1) * ratio;
+            }
+        }
+        else{
+
+            ratio = dat->row / num_threads;
+            start = k * ratio;
+            end = (k + 1) * ratio;   
+        }
+
+        for (int i = start; i < end; i++) {
+            float val = 0.0f;
+            for (int j = 0; j < dat->col; j++) {
+                val += dat->mat[i * dat->col + j] * dat->vec[j]; 
+            }
+            dat->out[i] = val;
+        }
+        
+        // inform main thread that this thread has finished
+        pthread_mutex_lock(&mutex);
+        dat->status = 0;
+        --active_threads;
+        
+        pthread_cond_signal(&cond_var2);
+        pthread_mutex_unlock(&mutex);
+    }
+    return NULL;
+       
 }
 
 // YOUR CODE ENDS HERE
@@ -168,7 +333,6 @@ int main(int argc, char* argv[]) {
     
     // the current position we are in
     long start = time_in_ms();
-
     int next, token = 1, pos = 0; // token = 1 -> <START>
     while (pos < config.seq_len) {
 
