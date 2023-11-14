@@ -1,11 +1,11 @@
 /*
 PLEASE WRITE DOWN FOLLOWING INFO BEFORE SUBMISSION
-* FILE NAME:
-* NAME:
-* UID :
-* Development Platform:
-* Remark: (How much you implemented?)
-* How to compile: (gcc -o llama2_[UID] llama2_[UID].c utilities.c -O2 -pthread -lm)
+* FILE NAME: 
+* NAME: Wang Kesheng
+* UID : 3035771799
+* Development Platform: workbench2
+* Remark: (How much you implemented?) all
+* How to compile: gcc -o llama2_3035771799 llama2_3035771799.c utilities.c -O2 -pthread -lm
 
 Please download the model and tokenizer to the same folder:
 $ wget -O model.bin https://huggingface.co/huangs0/llama2.c/resolve/main/model.bin
