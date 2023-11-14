@@ -6,4 +6,5 @@ In this assignment, I will use an open-source variation of GPT, llama2 released 
 multi-threading version will significantly accelerate the inference of Large Language Model.
 
 How to compile:       gcc -o llama2_3035771799 llama2_3035771799.c utilities.c -O2 -pthread -lm
+
 run example:   ./llama2_3035771799 42 8      42 stands for seed, 8 stands for number of threads.
